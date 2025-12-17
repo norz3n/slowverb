@@ -59,12 +59,6 @@ export function validateSettings(settings) {
     }
   }
 
-  
-  // Validate pitchCorrection (boolean)
-  if (settings.pitchCorrection !== undefined) {
-    validated.pitchCorrection = Boolean(settings.pitchCorrection);
-  }
-  
   // Validate enabled (boolean)
   if (settings.enabled !== undefined) {
     validated.enabled = Boolean(settings.enabled);

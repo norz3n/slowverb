@@ -67,12 +67,6 @@ describe('validateSettings', () => {
   });
 
   describe('boolean validation', () => {
-    it('should coerce pitchCorrection to boolean', () => {
-      expect(validateSettings({ pitchCorrection: 1 }).pitchCorrection).toBe(true);
-      expect(validateSettings({ pitchCorrection: 0 }).pitchCorrection).toBe(false);
-      expect(validateSettings({ pitchCorrection: 'yes' }).pitchCorrection).toBe(true);
-    });
-
     it('should coerce enabled to boolean', () => {
       expect(validateSettings({ enabled: 1 }).enabled).toBe(true);
       expect(validateSettings({ enabled: 0 }).enabled).toBe(false);

@@ -20,7 +20,6 @@ export const DEFAULT_SETTINGS = {
   speed: 1.0,
   reverb: 0,
   bassBoost: 0,
-  pitchCorrection: false,
   enabled: false
 };
 
@@ -54,16 +53,16 @@ export const AUDIO_CONSTANTS = {
   // Bass boost filter settings (lowshelf filter)
   bassBoost: {
     frequency: 250,      // Hz - cutoff frequency for bass boost
-    maxGainDb: 12,       // Maximum gain in dB at 100%
+    maxGainDb: 6,        // Maximum gain in dB at 100%
     filterType: 'lowshelf'
   },
   
-  // Reverb/Impulse Response settings (Schroeder reverb algorithm)
+  // Reverb/Impulse Response settings
   reverb: {
-    minDuration: 3.0,    // Minimum IR duration in seconds
-    maxDuration: 6.0,    // Maximum IR duration in seconds
-    defaultDuration: 4.0, // Default IR duration (hall effect)
-    defaultDecay: 1.0    // Default decay rate
+    minDuration: 1.5,    // Minimum IR duration in seconds
+    maxDuration: 3.0,    // Maximum IR duration in seconds
+    defaultDuration: 2.0, // Default IR duration (2 секунды)
+    defaultDecay: 1.0    // Not used, kept for compatibility
   },
   
   // Audio context settings
@@ -72,10 +71,7 @@ export const AUDIO_CONSTANTS = {
     latencyHint: 'interactive'
   },
   
-  // Pitch correction settings
-  pitchCorrection: {
-    maxLatencyMs: 100    // Maximum acceptable latency
-  }
+
 };
 
 /**
@@ -91,7 +87,10 @@ export const MESSAGE_TYPES = {
   // Service Worker → Offscreen
   START_CAPTURE: 'START_CAPTURE',
   STOP_CAPTURE: 'STOP_CAPTURE',
-  UPDATE_AUDIO: 'UPDATE_AUDIO'
+  UPDATE_AUDIO: 'UPDATE_AUDIO',
+  
+  // Offscreen → Service Worker
+  STREAM_ENDED: 'STREAM_ENDED'
 };
 
 /**

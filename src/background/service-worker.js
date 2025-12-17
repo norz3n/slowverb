@@ -183,12 +183,22 @@ async function startAudioCapture(tabId) {
       throw new Error('Failed to get media stream ID');
     }
     
+    // Get current tab URL for SPA navigation detection
+    let tabUrl = null;
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      tabUrl = tab.url;
+    } catch (e) {
+      // Ignore - URL is optional
+    }
+    
     // Update tab state
     tabStates.set(tabId, {
       tabId,
       isProcessing: true,
       streamId,
-      settings
+      settings,
+      url: tabUrl
     });
     
     // Send start capture message to offscreen document
@@ -317,7 +327,7 @@ async function handleUpdateSettings(payload) {
     // Forward to offscreen document IMMEDIATELY for real-time audio
     await forwardSettingsToOffscreen(newSettings);
     
-    // Send speed to content scripts IMMEDIATELY
+    // Send speed/pitchCorrection to content scripts IMMEDIATELY
     for (const [tabId, state] of tabStates) {
       state.settings = newSettings;
       tabStates.set(tabId, state);
@@ -358,6 +368,34 @@ async function handleUpdateSettings(payload) {
 }
 
 /**
+ * Ensures content script is injected into the tab.
+ * Needed for tabs that were open before extension was installed/enabled.
+ * 
+ * @param {number} tabId - Tab ID to inject into
+ * @returns {Promise<boolean>} True if injection succeeded or script already present
+ */
+async function ensureContentScript(tabId) {
+  try {
+    // Try to ping the content script first
+    await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+    return true; // Script already loaded
+  } catch {
+    // Content script not loaded, inject it
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['src/content/content.js']
+      });
+      console.log('[Slowverb] Content script injected into tab:', tabId);
+      return true;
+    } catch (error) {
+      console.warn('[Slowverb] Failed to inject content script:', error);
+      return false;
+    }
+  }
+}
+
+/**
  * Handles TOGGLE_EXTENSION message from popup.
  * Starts or stops audio capture based on enabled state.
  * 
@@ -366,20 +404,34 @@ async function handleUpdateSettings(payload) {
  * @returns {Promise<Object>} Response object
  */
 async function handleToggleExtension(payload, tabId) {
-  const { enabled } = payload;
+  const { enabled, settings: uiSettings } = payload;
   
   try {
-    // Update settings
-    await saveSettings({ enabled });
+    // Если переданы настройки из UI, сохраняем их
+    if (uiSettings) {
+      await saveSettings(uiSettings);
+    } else {
+      await saveSettings({ enabled });
+    }
     
     // Update badge
     await updateBadge(enabled, tabId);
     
-    // Get current settings for speed value
+    // Загружаем актуальные настройки (включая переданные из UI)
     const settings = await loadSettings();
     
     if (enabled) {
-      // Start audio capture for current tab
+      // Always stop existing capture first to avoid "active stream" error
+      if (tabStates.has(tabId)) {
+        await stopAudioCapture(tabId);
+        // Small delay to ensure stream is fully released
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      
+      // Ensure content script is loaded (for tabs opened before extension)
+      await ensureContentScript(tabId);
+      
+      // Start audio capture for current tab (settings будут применены внутри)
       await startAudioCapture(tabId);
       
       // Enable playback rate control in content script
@@ -389,7 +441,7 @@ async function handleToggleExtension(payload, tabId) {
           speed: settings.speed
         });
       } catch (e) {
-        // Content script may not be loaded
+        console.warn('[Slowverb] Could not send ENABLE to content script:', e);
       }
     } else {
       // Stop audio capture
@@ -439,17 +491,79 @@ async function handleResetSettings() {
 
 /**
  * Handles GET_SETTINGS message from popup.
- * Returns current settings.
+ * Returns current settings with actual enabled state based on active capture.
  * 
+ * @param {number} tabId - Current tab ID to check capture state
  * @returns {Promise<Object>} Response object with settings
  */
-async function handleGetSettings() {
+async function handleGetSettings(tabId) {
   try {
     const settings = await loadSettings();
+    
+    // Проверяем реальное состояние capture для текущей вкладки
+    // Если capture не активен, enabled должен быть false
+    if (tabId && settings.enabled && !tabStates.has(tabId)) {
+      settings.enabled = false;
+      // Обновляем storage чтобы синхронизировать состояние
+      await saveSettings({ enabled: false });
+      await updateBadge(false, tabId);
+    }
+    
     return { success: true, settings };
   } catch (error) {
     console.error('[Slowverb] Failed to get settings:', error);
     return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Handles STREAM_ENDED message from offscreen document.
+ * Attempts to recapture audio when stream ends (e.g., YouTube SPA navigation).
+ * 
+ * @returns {Promise<void>}
+ */
+async function handleStreamEnded() {
+  console.log('[Slowverb] Stream ended, attempting recapture...');
+  
+  // Find the active tab that had capture
+  for (const [tabId, state] of tabStates) {
+    if (state.isProcessing) {
+      console.log('[Slowverb] Recapturing tab:', tabId);
+      
+      // Clean up old state
+      tabStates.delete(tabId);
+      
+      // Small delay to let the page settle
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      try {
+        // Recapture with current settings
+        await startAudioCapture(tabId);
+        
+        // Re-enable content script
+        const settings = await loadSettings();
+        try {
+          await chrome.tabs.sendMessage(tabId, {
+            type: 'ENABLE',
+            speed: settings.speed
+          });
+        } catch (e) {
+          // Content script may need re-injection
+          await ensureContentScript(tabId);
+          await chrome.tabs.sendMessage(tabId, {
+            type: 'ENABLE',
+            speed: settings.speed
+          });
+        }
+        
+        console.log('[Slowverb] Recapture successful');
+      } catch (error) {
+        console.error('[Slowverb] Recapture failed:', error);
+        await updateBadge(false, tabId);
+      }
+      
+      break; // Only one active capture at a time
+    }
   }
 }
 
@@ -492,7 +606,13 @@ function handleMessage(message, sender, sendResponse) {
           break;
           
         case MESSAGE_TYPES.GET_SETTINGS:
-          response = await handleGetSettings();
+          response = await handleGetSettings(tabId);
+          break;
+          
+        case MESSAGE_TYPES.STREAM_ENDED:
+          // Handle stream ended from offscreen document
+          await handleStreamEnded();
+          response = { success: true };
           break;
           
         default:
@@ -531,21 +651,46 @@ async function handleTabRemoved(tabId) {
 
 /**
  * Handles tab update event.
- * Stops audio processing when navigating away from a page.
+ * Stops audio processing only when navigating to a different origin.
+ * SPA navigation (like YouTube) keeps the same origin and should not stop capture.
  * 
  * Requirements: 6.4 (release audio resources on navigation)
  * 
  * @param {number} tabId - ID of the updated tab
  * @param {Object} changeInfo - Information about the change
+ * @param {Object} tab - Tab object with URL info
  */
-async function handleTabUpdated(tabId, changeInfo) {
-  // Stop capture when tab starts loading a new page
-  if (changeInfo.status === 'loading' && tabStates.has(tabId)) {
-    console.log('[Slowverb] Tab navigating, stopping capture:', tabId);
-    await stopAudioCapture(tabId);
+async function handleTabUpdated(tabId, changeInfo, tab) {
+  // Реагируем только на навигацию на ДРУГОЙ домен
+  // Для SPA сайтов (YouTube, SoundCloud и т.д.) capture должен продолжать работать
+  if (!tabStates.has(tabId)) return;
+  
+  // changeInfo.url присутствует только при реальной навигации
+  if (changeInfo.url) {
+    const tabState = tabStates.get(tabId);
+    const oldUrl = tabState.url;
     
-    // Update badge to reflect disabled state
-    await updateBadge(false, tabId);
+    // Проверяем, изменился ли origin (домен)
+    try {
+      if (oldUrl) {
+        const oldOrigin = new URL(oldUrl).origin;
+        const newOrigin = new URL(changeInfo.url).origin;
+        
+        // Если origin тот же — это SPA навигация, продолжаем работать
+        if (oldOrigin === newOrigin) {
+          console.log('[Slowverb] Same-origin navigation, keeping capture');
+          tabState.url = changeInfo.url;
+          return;
+        }
+        
+        // Origin изменился — останавливаем capture
+        console.log('[Slowverb] Cross-origin navigation, stopping capture');
+        await stopAudioCapture(tabId);
+        await updateBadge(false, tabId);
+      }
+    } catch (e) {
+      // Ошибка парсинга URL — игнорируем
+    }
   }
 }
 
@@ -608,6 +753,7 @@ export {
   handleToggleExtension,
   handleResetSettings,
   handleGetSettings,
+  handleStreamEnded,
   updateBadge,
   forwardSettingsToOffscreen,
   

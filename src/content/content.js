@@ -20,6 +20,12 @@ let currentSpeed = 1.0;
 let isEnabled = false;
 
 /**
+ * WeakSet to track media elements we've attached ratechange listener to.
+ * @type {WeakSet<HTMLMediaElement>}
+ */
+const monitoredElements = new WeakSet();
+
+/**
  * Finds all media elements (video and audio) on the page.
  * 
  * @returns {HTMLMediaElement[]} Array of media elements
@@ -31,8 +37,37 @@ function findMediaElements() {
 }
 
 /**
+ * Handles ratechange event on media elements.
+ * Reverts playbackRate if YouTube or other site tries to change it.
+ * 
+ * @param {Event} event - ratechange event
+ */
+function handleRateChange(event) {
+  if (!isEnabled) return;
+  
+  const media = event.target;
+  // If the rate doesn't match our setting, revert it
+  if (Math.abs(media.playbackRate - currentSpeed) > 0.001) {
+    console.log(`[Slowverb] Reverting playbackRate from ${media.playbackRate} to ${currentSpeed}`);
+    media.playbackRate = currentSpeed;
+  }
+}
+
+/**
+ * Attaches ratechange listener to media element if not already attached.
+ * 
+ * @param {HTMLMediaElement} media - Media element to monitor
+ */
+function monitorMediaElement(media) {
+  if (monitoredElements.has(media)) return;
+  
+  media.addEventListener('ratechange', handleRateChange);
+  monitoredElements.add(media);
+}
+
+/**
  * Sets playback rate on all media elements.
- * Disables preservesPitch to get the classic "slowed" pitch-lowering effect.
+ * preservesPitch is always false for classic "slowed" effect (lower pitch with slower speed).
  * 
  * @param {number} rate - Playback rate (0.5 to 1.5)
  */
@@ -41,8 +76,10 @@ function setPlaybackRate(rate) {
   
   mediaElements.forEach(media => {
     try {
-      // Disable pitch preservation for classic Slowed & Reverb effect
-      // This makes slower playback = lower pitch (like vinyl/tape)
+      // Monitor for external rate changes (YouTube likes to reset playbackRate)
+      monitorMediaElement(media);
+      
+      // Classic Slowed & Reverb: slower = lower pitch
       media.preservesPitch = false;
       media.mozPreservesPitch = false; // Firefox
       media.webkitPreservesPitch = false; // Older WebKit
@@ -53,7 +90,7 @@ function setPlaybackRate(rate) {
     }
   });
   
-  console.log(`[Slowverb] Set playbackRate to ${rate} (preservesPitch=false) on ${mediaElements.length} elements`);
+  console.log(`[Slowverb] Set playbackRate to ${rate} on ${mediaElements.length} elements`);
 }
 
 /**
@@ -102,6 +139,11 @@ function handleMessage(message, sender, sendResponse) {
   console.log('[Slowverb Content] Received message:', message.type);
   
   switch (message.type) {
+    case 'PING':
+      // Used to check if content script is loaded
+      sendResponse({ success: true, loaded: true });
+      break;
+      
     case 'SET_SPEED':
       currentSpeed = message.speed;
       if (isEnabled) {

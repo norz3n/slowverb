@@ -26,7 +26,6 @@ const elements = {
   reverbValue: null,
   bassBoostSlider: null,
   bassBoostValue: null,
-  pitchCorrectionToggle: null,
   resetButton: null
 };
 
@@ -60,8 +59,9 @@ const SAVE_DEBOUNCE_MS = 300;
  */
 async function sendToBackground(message) {
   try {
-    // Get current tab ID for toggle operations
-    if (message.type === MESSAGE_TYPES.TOGGLE_EXTENSION) {
+    // Get current tab ID for operations that need it
+    if (message.type === MESSAGE_TYPES.TOGGLE_EXTENSION || 
+        message.type === MESSAGE_TYPES.GET_SETTINGS) {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab) {
         message.tabId = tab.id;
@@ -149,6 +149,7 @@ async function resetToDefaults() {
 
 /**
  * Toggles the extension enabled state.
+ * Sends current UI settings along with enabled state to ensure they are applied.
  * 
  * @param {boolean} enabled - New enabled state
  * @returns {Promise<void>}
@@ -156,9 +157,14 @@ async function resetToDefaults() {
 async function toggleExtension(enabled) {
   currentSettings.enabled = enabled;
   
+  // При включении отправляем ВСЕ текущие настройки из UI
   const response = await sendToBackground({
     type: MESSAGE_TYPES.TOGGLE_EXTENSION,
-    payload: { enabled }
+    payload: { 
+      enabled,
+      // Передаём текущие настройки чтобы они применились при включении
+      settings: enabled ? { ...currentSettings } : undefined
+    }
   });
   
   if (!response?.success) {
@@ -209,10 +215,6 @@ function updateUI(settings) {
     elements.bassBoostValue.textContent = `${Math.round(settings.bassBoost)}%`;
   }
   
-  // Pitch correction toggle
-  if (elements.pitchCorrectionToggle) {
-    elements.pitchCorrectionToggle.checked = settings.pitchCorrection;
-  }
 }
 
 // ============================================================================
@@ -289,16 +291,6 @@ function handleBassBoostChange(event) {
 }
 
 /**
- * Handles pitch correction toggle change.
- * 
- * @param {Event} event - Change event
- */
-function handlePitchCorrectionChange(event) {
-  const pitchCorrection = event.target.checked;
-  saveSettings({ pitchCorrection });
-}
-
-/**
  * Handles enable toggle change.
  * 
  * @param {Event} event - Change event
@@ -333,7 +325,6 @@ function initializeUI() {
   elements.reverbValue = document.getElementById('reverbValue');
   elements.bassBoostSlider = document.getElementById('bassBoostSlider');
   elements.bassBoostValue = document.getElementById('bassBoostValue');
-  elements.pitchCorrectionToggle = document.getElementById('pitchCorrectionToggle');
   elements.resetButton = document.getElementById('resetButton');
   
   // Set up event listeners
@@ -351,10 +342,6 @@ function initializeUI() {
   
   if (elements.bassBoostSlider) {
     elements.bassBoostSlider.addEventListener('input', handleBassBoostChange);
-  }
-  
-  if (elements.pitchCorrectionToggle) {
-    elements.pitchCorrectionToggle.addEventListener('change', handlePitchCorrectionChange);
   }
   
   if (elements.resetButton) {
@@ -392,7 +379,6 @@ export {
   handleSpeedChange,
   handleReverbChange,
   handleBassBoostChange,
-  handlePitchCorrectionChange,
   handleEnableToggleChange,
   handleResetClick
 };
