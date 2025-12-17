@@ -1,0 +1,23 @@
+{
+  "name": "slowverb",
+  "version": "1.0.0",
+  "description": "Slowed & Reverb audio effects extension for Chromium browsers",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0",
+    "fast-check": "^3.22.0"
+  },
+  "keywords": [
+    "chrome-extension",
+    "audio",
+    "reverb",
+    "slowed",
+    "web-audio-api"
+  ],
+  "license": "MIT"
+}

@@ -1,0 +1,578 @@
+/**
+ * Slowverb Extension - Offscreen Document Audio Processor
+ * 
+ * Handles all Web Audio API operations for the extension.
+ * This offscreen document is required because service workers don't have access to Web Audio API.
+ * 
+ * Requirements: 6.1 (audio processing pipeline), 6.2 (tabCapture with offscreen), 6.4 (resource cleanup)
+ */
+
+import { 
+  calculatePlaybackRate, 
+  calculateWetDryMix, 
+  calculateBassBoostGain,
+  calculatePitchFactor,
+  generateImpulseResponse 
+} from '../lib/audio-utils.js';
+import { 
+  MESSAGE_TYPES, 
+  ERROR_CODES, 
+  AUDIO_CONSTANTS,
+  DEFAULT_SETTINGS 
+} from '../lib/constants.js';
+
+/**
+ * Audio processor state object.
+ * Contains AudioContext and all audio nodes.
+ * 
+ * @type {Object}
+ */
+const audioProcessor = {
+  context: null,
+  source: null,
+  pitchShifter: null,
+  pitchShifterLoaded: false,
+  bassBoostFilter: null,
+  convolver: null,
+  dryGain: null,
+  wetGain: null,
+  outputGain: null,
+  // Current settings for reference
+  currentSettings: { ...DEFAULT_SETTINGS }
+};
+
+
+/**
+ * Loads the pitch shifter AudioWorklet module.
+ * Must be called after AudioContext is created.
+ * 
+ * Requirements: 3.1, 3.4
+ * 
+ * @returns {Promise<void>}
+ * @throws {Error} If worklet loading fails
+ */
+async function loadPitchShifterWorklet() {
+  if (audioProcessor.pitchShifterLoaded) {
+    return;
+  }
+  
+  try {
+    // Load the pitch shifter processor module (path relative to extension root)
+    const workletUrl = chrome.runtime.getURL('src/worklets/pitch-shifter-processor.js');
+    await audioProcessor.context.audioWorklet.addModule(workletUrl);
+    audioProcessor.pitchShifterLoaded = true;
+    console.log('[Slowverb] Pitch shifter worklet loaded');
+  } catch (error) {
+    console.error('[Slowverb] Failed to load pitch shifter worklet:', error);
+    // Don't throw - pitch correction is optional, extension can work without it
+    audioProcessor.pitchShifterLoaded = false;
+  }
+}
+
+/**
+ * Initializes the AudioContext with proper error handling.
+ * Handles suspended state by resuming the context.
+ * Also loads the pitch shifter AudioWorklet.
+ * 
+ * Requirements: 6.2
+ * 
+ * @returns {Promise<AudioContext>} Initialized AudioContext
+ * @throws {Error} If AudioContext creation fails
+ */
+async function initAudioContext() {
+  try {
+    // Create AudioContext with interactive latency hint for real-time processing
+    audioProcessor.context = new AudioContext({
+      latencyHint: AUDIO_CONSTANTS.context.latencyHint,
+      sampleRate: AUDIO_CONSTANTS.context.sampleRate
+    });
+    
+    // Handle suspended state (browsers may suspend AudioContext until user interaction)
+    if (audioProcessor.context.state === 'suspended') {
+      await audioProcessor.context.resume();
+    }
+    
+    console.log('[Slowverb] AudioContext initialized, state:', audioProcessor.context.state);
+    
+    // Load pitch shifter worklet
+    await loadPitchShifterWorklet();
+    
+    return audioProcessor.context;
+  } catch (error) {
+    console.error('[Slowverb] Failed to create AudioContext:', error);
+    throw new Error(ERROR_CODES.AUDIO_CONTEXT_INIT_FAILED);
+  }
+}
+
+/**
+ * Creates the pitch shifter AudioWorkletNode.
+ * 
+ * Requirements: 3.1, 3.4
+ * 
+ * @returns {AudioWorkletNode|null} Pitch shifter node or null if not available
+ */
+function createPitchShifterNode() {
+  const ctx = audioProcessor.context;
+  
+  if (!audioProcessor.pitchShifterLoaded) {
+    console.warn('[Slowverb] Pitch shifter worklet not loaded, skipping');
+    return null;
+  }
+  
+  try {
+    const pitchShifter = new AudioWorkletNode(ctx, 'pitch-shifter-processor', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [2], // Stereo output
+      parameterData: {
+        pitchFactor: 1.0
+      }
+    });
+    
+    console.log('[Slowverb] Pitch shifter node created (stereo)');
+    return pitchShifter;
+  } catch (error) {
+    console.error('[Slowverb] Failed to create pitch shifter node:', error);
+    return null;
+  }
+}
+
+/**
+ * Sets up the audio processing graph with all required nodes.
+ * Creates and connects nodes in the correct order:
+ * source → pitchShifter → bassBoost → dry/wet split → output
+ * 
+ * Requirements: 6.1 (effects order: pitch correction, bass boost, reverb)
+ * 
+ * @returns {void}
+ */
+function setupAudioGraph() {
+  const ctx = audioProcessor.context;
+  if (!ctx) {
+    console.error('[Slowverb] AudioContext not initialized');
+    return;
+  }
+  
+  // Create pitch shifter node (may be null if worklet not loaded)
+  audioProcessor.pitchShifter = createPitchShifterNode();
+  
+  // Create bass boost filter (lowshelf) - stereo
+  audioProcessor.bassBoostFilter = ctx.createBiquadFilter();
+  audioProcessor.bassBoostFilter.type = AUDIO_CONSTANTS.bassBoost.filterType;
+  audioProcessor.bassBoostFilter.frequency.value = AUDIO_CONSTANTS.bassBoost.frequency;
+  audioProcessor.bassBoostFilter.gain.value = 0; // Start with no boost
+  audioProcessor.bassBoostFilter.channelCount = 2;
+  audioProcessor.bassBoostFilter.channelCountMode = 'explicit';
+  
+  // Create convolver for reverb effect - stereo
+  audioProcessor.convolver = ctx.createConvolver();
+  audioProcessor.convolver.channelCount = 2;
+  audioProcessor.convolver.channelCountMode = 'explicit';
+  // Generate default impulse response (stereo)
+  const irBuffer = generateImpulseResponse(
+    ctx,
+    AUDIO_CONSTANTS.reverb.defaultDuration,
+    AUDIO_CONSTANTS.reverb.defaultDecay
+  );
+  audioProcessor.convolver.buffer = irBuffer;
+  
+  // Create dry/wet gain nodes for reverb mix - stereo
+  audioProcessor.dryGain = ctx.createGain();
+  audioProcessor.dryGain.gain.value = 1.0; // Full dry signal by default
+  audioProcessor.dryGain.channelCount = 2;
+  audioProcessor.dryGain.channelCountMode = 'explicit';
+  
+  audioProcessor.wetGain = ctx.createGain();
+  audioProcessor.wetGain.gain.value = 0; // No wet signal by default
+  audioProcessor.wetGain.channelCount = 2;
+  audioProcessor.wetGain.channelCountMode = 'explicit';
+  
+  // Create output gain node - stereo
+  audioProcessor.outputGain = ctx.createGain();
+  audioProcessor.outputGain.gain.value = 1.0;
+  audioProcessor.outputGain.channelCount = 2;
+  audioProcessor.outputGain.channelCountMode = 'explicit';
+  
+  // Connect the audio graph (without source, which is connected later)
+  // If pitch shifter exists: pitchShifter → bassBoost
+  // Otherwise: source will connect directly to bassBoost
+  if (audioProcessor.pitchShifter) {
+    audioProcessor.pitchShifter.connect(audioProcessor.bassBoostFilter);
+  }
+  
+  // Bass boost → dry path → output
+  // Bass boost → convolver → wet path → output
+  audioProcessor.bassBoostFilter.connect(audioProcessor.dryGain);
+  audioProcessor.bassBoostFilter.connect(audioProcessor.convolver);
+  audioProcessor.convolver.connect(audioProcessor.wetGain);
+  audioProcessor.dryGain.connect(audioProcessor.outputGain);
+  audioProcessor.wetGain.connect(audioProcessor.outputGain);
+  audioProcessor.outputGain.connect(ctx.destination);
+  
+  console.log('[Slowverb] Audio graph setup complete');
+}
+
+
+/**
+ * Connects tab audio capture to the audio processing graph.
+ * Creates MediaStreamSource from the captured tab audio stream.
+ * 
+ * Requirements: 6.2 (tabCapture API with offscreen document)
+ * 
+ * @param {string} streamId - Chrome tab capture stream ID
+ * @returns {Promise<void>}
+ * @throws {Error} If capture connection fails
+ */
+async function connectTabAudio(streamId) {
+  try {
+    // Get media stream from tab capture
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        mandatory: {
+          chromeMediaSource: 'tab',
+          chromeMediaSourceId: streamId
+        }
+      },
+      video: false
+    });
+    
+    // Ensure AudioContext is initialized
+    if (!audioProcessor.context) {
+      await initAudioContext();
+      setupAudioGraph();
+    }
+    
+    // Resume context if suspended
+    if (audioProcessor.context.state === 'suspended') {
+      await audioProcessor.context.resume();
+    }
+    
+    // Disconnect existing source if any
+    if (audioProcessor.source) {
+      audioProcessor.source.disconnect();
+      audioProcessor.source = null;
+    }
+    
+    // Create MediaStreamSource from captured audio
+    audioProcessor.source = audioProcessor.context.createMediaStreamSource(stream);
+    
+    // Connect source to the audio graph
+    // Source → pitchShifter → bassBoostFilter (if pitch shifter available)
+    // Source → bassBoostFilter (if pitch shifter not available)
+    if (audioProcessor.pitchShifter) {
+      audioProcessor.source.connect(audioProcessor.pitchShifter);
+    } else {
+      audioProcessor.source.connect(audioProcessor.bassBoostFilter);
+    }
+    
+    console.log('[Slowverb] Tab audio connected successfully');
+  } catch (error) {
+    console.error('[Slowverb] Failed to connect tab audio:', error);
+    
+    if (error.name === 'NotAllowedError') {
+      throw new Error(ERROR_CODES.TAB_CAPTURE_PERMISSION_DENIED);
+    }
+    throw new Error(ERROR_CODES.TAB_CAPTURE_FAILED);
+  }
+}
+
+/**
+ * Updates the playback speed (playback rate).
+ * Also updates pitch correction factor if enabled.
+ * 
+ * Note: Actual playback rate change for media elements is handled by
+ * the content script or media element directly. This function manages
+ * the pitch correction compensation.
+ * 
+ * Requirements: 1.1
+ * 
+ * @param {number} value - Speed value (0.5 to 1.5)
+ */
+function updateSpeed(value) {
+  const playbackRate = calculatePlaybackRate(value);
+  audioProcessor.currentSettings.speed = playbackRate;
+  
+  console.log('[Slowverb] Speed updated to:', playbackRate);
+  
+  // Update pitch correction factor based on new speed
+  // This compensates for the pitch change caused by speed adjustment
+  updatePitchCorrection(audioProcessor.currentSettings.pitchCorrection, playbackRate);
+}
+
+/**
+ * Updates the reverb wet/dry mix.
+ * 
+ * Requirements: 2.1
+ * 
+ * @param {number} value - Reverb percentage (0 to 100)
+ */
+function updateReverb(value) {
+  const { wetGain, dryGain } = calculateWetDryMix(value);
+  
+  audioProcessor.currentSettings.reverb = value;
+  
+  if (audioProcessor.wetGain && audioProcessor.dryGain) {
+    audioProcessor.wetGain.gain.value = wetGain;
+    audioProcessor.dryGain.gain.value = dryGain;
+    console.log('[Slowverb] Reverb updated - wet:', wetGain, 'dry:', dryGain);
+  }
+}
+
+/**
+ * Updates the bass boost filter gain.
+ * 
+ * Requirements: 4.1
+ * 
+ * @param {number} value - Bass boost percentage (0 to 100)
+ */
+function updateBassBoost(value) {
+  const gainDb = calculateBassBoostGain(value);
+  
+  audioProcessor.currentSettings.bassBoost = value;
+  
+  if (audioProcessor.bassBoostFilter) {
+    audioProcessor.bassBoostFilter.gain.value = gainDb;
+    console.log('[Slowverb] Bass boost updated to:', gainDb, 'dB');
+  }
+}
+
+/**
+ * Updates pitch correction state.
+ * Controls the pitch shifter AudioWorklet node.
+ * 
+ * Requirements: 3.1, 3.2
+ * 
+ * @param {boolean} enabled - Whether pitch correction is enabled
+ * @param {number} speed - Current playback speed
+ */
+function updatePitchCorrection(enabled, speed) {
+  const pitchFactor = calculatePitchFactor(speed, enabled);
+  
+  audioProcessor.currentSettings.pitchCorrection = enabled;
+  
+  if (audioProcessor.pitchShifter) {
+    // Set pitch factor parameter
+    const pitchParam = audioProcessor.pitchShifter.parameters.get('pitchFactor');
+    if (pitchParam) {
+      pitchParam.value = pitchFactor;
+    }
+    
+    // Send bypass message to processor
+    audioProcessor.pitchShifter.port.postMessage({
+      command: 'setBypass',
+      value: !enabled
+    });
+    
+    console.log('[Slowverb] Pitch correction:', enabled, 'factor:', pitchFactor);
+  } else {
+    console.warn('[Slowverb] Pitch shifter not available, pitch correction disabled');
+  }
+}
+
+
+/**
+ * Applies all settings to the audio processor.
+ * 
+ * @param {Object} settings - Settings object with speed, reverb, bassBoost, pitchCorrection
+ */
+function applySettings(settings) {
+  if (settings.speed !== undefined) {
+    updateSpeed(settings.speed);
+  }
+  if (settings.reverb !== undefined) {
+    updateReverb(settings.reverb);
+  }
+  if (settings.bassBoost !== undefined) {
+    updateBassBoost(settings.bassBoost);
+  }
+  if (settings.pitchCorrection !== undefined) {
+    updatePitchCorrection(settings.pitchCorrection, audioProcessor.currentSettings.speed);
+  }
+}
+
+/**
+ * Disconnects all audio nodes and releases resources.
+ * Nullifies source and disconnects all nodes from the graph.
+ * 
+ * Requirements: 6.4 (release audio resources)
+ * Property 9: Resource cleanup on disconnect
+ */
+function disconnect() {
+  console.log('[Slowverb] Disconnecting audio processor...');
+  
+  // Disconnect and nullify source
+  if (audioProcessor.source) {
+    try {
+      audioProcessor.source.disconnect();
+    } catch (e) {
+      // Ignore errors if already disconnected
+    }
+    audioProcessor.source = null;
+  }
+  
+  // Disconnect pitch shifter if exists
+  if (audioProcessor.pitchShifter) {
+    try {
+      audioProcessor.pitchShifter.disconnect();
+    } catch (e) {
+      // Ignore errors if already disconnected
+    }
+    audioProcessor.pitchShifter = null;
+  }
+  
+  // Disconnect bass boost filter
+  if (audioProcessor.bassBoostFilter) {
+    try {
+      audioProcessor.bassBoostFilter.disconnect();
+    } catch (e) {
+      // Ignore errors if already disconnected
+    }
+    audioProcessor.bassBoostFilter = null;
+  }
+  
+  // Disconnect convolver
+  if (audioProcessor.convolver) {
+    try {
+      audioProcessor.convolver.disconnect();
+    } catch (e) {
+      // Ignore errors if already disconnected
+    }
+    audioProcessor.convolver = null;
+  }
+  
+  // Disconnect dry gain
+  if (audioProcessor.dryGain) {
+    try {
+      audioProcessor.dryGain.disconnect();
+    } catch (e) {
+      // Ignore errors if already disconnected
+    }
+    audioProcessor.dryGain = null;
+  }
+  
+  // Disconnect wet gain
+  if (audioProcessor.wetGain) {
+    try {
+      audioProcessor.wetGain.disconnect();
+    } catch (e) {
+      // Ignore errors if already disconnected
+    }
+    audioProcessor.wetGain = null;
+  }
+  
+  // Disconnect output gain
+  if (audioProcessor.outputGain) {
+    try {
+      audioProcessor.outputGain.disconnect();
+    } catch (e) {
+      // Ignore errors if already disconnected
+    }
+    audioProcessor.outputGain = null;
+  }
+  
+  // Close AudioContext
+  if (audioProcessor.context) {
+    try {
+      audioProcessor.context.close();
+    } catch (e) {
+      // Ignore errors if already closed
+    }
+    audioProcessor.context = null;
+  }
+  
+  // Reset current settings and state
+  audioProcessor.currentSettings = { ...DEFAULT_SETTINGS };
+  audioProcessor.pitchShifterLoaded = false;
+  
+  console.log('[Slowverb] Audio processor disconnected and resources released');
+}
+
+/**
+ * Message types that offscreen document should handle.
+ * Other messages should be ignored (passed to service worker).
+ */
+const OFFSCREEN_MESSAGE_TYPES = [
+  MESSAGE_TYPES.START_CAPTURE,
+  MESSAGE_TYPES.STOP_CAPTURE,
+  MESSAGE_TYPES.UPDATE_AUDIO
+];
+
+/**
+ * Handles incoming messages from the service worker.
+ * Only processes messages intended for offscreen document.
+ * 
+ * @param {Object} message - Message object with type and payload
+ * @param {Object} sender - Message sender info
+ * @param {Function} sendResponse - Response callback
+ * @returns {boolean|undefined} True for async response, undefined to pass to other listeners
+ */
+function handleMessage(message, sender, sendResponse) {
+  // Ignore messages not intended for offscreen document
+  if (!OFFSCREEN_MESSAGE_TYPES.includes(message.type)) {
+    return; // Let other listeners handle it
+  }
+  
+  console.log('[Slowverb Offscreen] Received message:', message.type);
+  
+  try {
+    switch (message.type) {
+      case MESSAGE_TYPES.START_CAPTURE:
+        // Initialize audio context and connect tab audio
+        (async () => {
+          try {
+            await initAudioContext();
+            setupAudioGraph();
+            await connectTabAudio(message.streamId);
+            
+            // Apply initial settings if provided
+            if (message.settings) {
+              applySettings(message.settings);
+            }
+            
+            sendResponse({ success: true });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true; // Async response
+        
+      case MESSAGE_TYPES.STOP_CAPTURE:
+        disconnect();
+        sendResponse({ success: true });
+        return false;
+        
+      case MESSAGE_TYPES.UPDATE_AUDIO:
+        if (message.settings) {
+          applySettings(message.settings);
+        }
+        sendResponse({ success: true });
+        return false;
+    }
+  } catch (error) {
+    console.error('[Slowverb Offscreen] Error handling message:', error);
+    sendResponse({ success: false, error: ERROR_CODES.UNKNOWN_ERROR });
+  }
+  
+  return false;
+}
+
+// Set up message listener for service worker communication
+chrome.runtime.onMessage.addListener(handleMessage);
+
+console.log('[Slowverb] Offscreen document loaded and ready');
+
+// Export for testing purposes
+export {
+  audioProcessor,
+  initAudioContext,
+  loadPitchShifterWorklet,
+  createPitchShifterNode,
+  setupAudioGraph,
+  connectTabAudio,
+  updateSpeed,
+  updateReverb,
+  updateBassBoost,
+  updatePitchCorrection,
+  disconnect,
+  applySettings
+};
