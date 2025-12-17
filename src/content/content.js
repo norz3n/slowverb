@@ -54,7 +54,36 @@ function handleRateChange(event) {
 }
 
 /**
+ * Debounce timer for media change notifications.
+ * @type {number|null}
+ */
+let mediaChangeTimer = null;
+
+/**
+ * Notifies service worker that media source changed.
+ * This triggers audio recapture for the new video.
+ * Debounced to avoid multiple rapid notifications.
+ */
+function notifyMediaChanged() {
+  if (!isEnabled) return;
+  
+  // Debounce - only notify once per 1 second
+  if (mediaChangeTimer) {
+    clearTimeout(mediaChangeTimer);
+  }
+  
+  mediaChangeTimer = setTimeout(() => {
+    console.log('[Slowverb] Media source changed, requesting recapture');
+    chrome.runtime.sendMessage({ type: 'MEDIA_CHANGED' }).catch(e => {
+      // Service worker may not be ready
+    });
+    mediaChangeTimer = null;
+  }, 1000);
+}
+
+/**
  * Attaches ratechange listener to media element if not already attached.
+ * Also monitors for source changes.
  * 
  * @param {HTMLMediaElement} media - Media element to monitor
  */
@@ -62,6 +91,22 @@ function monitorMediaElement(media) {
   if (monitoredElements.has(media)) return;
   
   media.addEventListener('ratechange', handleRateChange);
+  
+  // Monitor for video source changes (YouTube video switch)
+  // emptied fires when media is reset, loadeddata fires when new data is ready
+  media.addEventListener('emptied', () => {
+    console.log('[Slowverb] Media emptied detected');
+    notifyMediaChanged();
+  });
+  
+  media.addEventListener('loadeddata', () => {
+    console.log('[Slowverb] Media loadeddata detected');
+    // Re-apply playback rate to new video
+    if (isEnabled) {
+      setPlaybackRate(currentSpeed);
+    }
+  });
+  
   monitoredElements.add(media);
 }
 

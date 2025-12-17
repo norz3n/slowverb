@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Slowverb</title>
+  <!-- Google Fonts: Montserrat -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -13,63 +17,40 @@
       <h1 class="title">Slowverb</h1>
       <label class="toggle" title="Enable/disable audio processing">
         <input type="checkbox" id="enableToggle">
-        <span class="toggle-slider"></span>
+        <span class="toggle-track"></span>
+        <span class="toggle-thumb"></span>
       </label>
     </header>
 
-    <!-- Speed control (0.5x - 1.5x) -->
+    <!-- Speed control -->
     <div class="control-group">
       <div class="control-header">
         <label for="speedSlider" title="Adjust playback speed (0.5x - 1.5x)">Speed</label>
         <span id="speedValue" class="value">1.0x</span>
       </div>
-      <input 
-        type="range" 
-        id="speedSlider" 
-        min="0.5" 
-        max="1.5" 
-        step="0.05" 
-        value="1.0"
-        title="Adjust playback speed (0.5x - 1.5x)"
-      >
+      <input type="range" id="speedSlider" min="0.5" max="1.5" step="0.05" value="1.0" title="Adjust playback speed (0.5x - 1.5x)">
     </div>
 
-    <!-- Reverb control (0% - 100%) -->
+    <!-- Reverb control -->
     <div class="control-group">
       <div class="control-header">
         <label for="reverbSlider" title="Add reverb effect (0% - 100%)">Reverb</label>
         <span id="reverbValue" class="value">0%</span>
       </div>
-      <input 
-        type="range" 
-        id="reverbSlider" 
-        min="0" 
-        max="100" 
-        step="1" 
-        value="0"
-        title="Add reverb effect (0% - 100%)"
-      >
+      <input type="range" id="reverbSlider" min="0" max="100" step="1" value="0" title="Add reverb effect (0% - 100%)">
     </div>
 
-    <!-- Bass Boost control (0% - 100%) -->
+    <!-- Bass Boost control -->
     <div class="control-group">
       <div class="control-header">
         <label for="bassBoostSlider" title="Boost low frequencies (0% - 100%)">Bass Boost</label>
         <span id="bassBoostValue" class="value">0%</span>
       </div>
-      <input 
-        type="range" 
-        id="bassBoostSlider" 
-        min="0" 
-        max="100" 
-        step="1" 
-        value="0"
-        title="Boost low frequencies (0% - 100%)"
-      >
+      <input type="range" id="bassBoostSlider" min="0" max="100" step="1" value="0" title="Boost low frequencies (0% - 100%)">
     </div>
 
     <!-- Reset button -->
-    <div class="control-group">
+    <div class="control-group reset-group">
       <button id="resetButton" class="reset-btn" title="Reset all settings to default values">
         Reset to Defaults
       </button>

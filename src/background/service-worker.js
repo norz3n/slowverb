@@ -444,8 +444,14 @@ async function handleToggleExtension(payload, tabId) {
         console.warn('[Slowverb] Could not send ENABLE to content script:', e);
       }
     } else {
-      // Stop audio capture
-      await stopAudioCapture(tabId);
+      // Stop audio capture - stop ALL active captures and offscreen
+      // This ensures we stop even if tabId doesn't match due to recapture
+      for (const [activeTabId] of tabStates) {
+        await stopAudioCapture(activeTabId);
+      }
+      
+      // Also close offscreen document to fully stop audio
+      await closeOffscreenDocument();
       
       // Disable playback rate control in content script
       try {
@@ -533,8 +539,12 @@ async function handleStreamEnded() {
       // Clean up old state
       tabStates.delete(tabId);
       
-      // Small delay to let the page settle
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // IMPORTANT: Close offscreen document to release the stream
+      // This prevents "Cannot capture a tab with an active stream" error
+      await closeOffscreenDocument();
+      
+      // Delay to let Chrome release the stream
+      await new Promise(resolve => setTimeout(resolve, 300));
       
       try {
         // Recapture with current settings
@@ -560,6 +570,8 @@ async function handleStreamEnded() {
       } catch (error) {
         console.error('[Slowverb] Recapture failed:', error);
         await updateBadge(false, tabId);
+        // Save disabled state
+        await saveSettings({ enabled: false });
       }
       
       break; // Only one active capture at a time
@@ -612,6 +624,15 @@ function handleMessage(message, sender, sendResponse) {
         case MESSAGE_TYPES.STREAM_ENDED:
           // Handle stream ended from offscreen document
           await handleStreamEnded();
+          response = { success: true };
+          break;
+          
+        case 'MEDIA_CHANGED':
+          // Handle media source change from content script (YouTube video switch)
+          if (tabId && tabStates.has(tabId)) {
+            console.log('[Slowverb] Media changed in tab:', tabId);
+            await handleStreamEnded();
+          }
           response = { success: true };
           break;
           
