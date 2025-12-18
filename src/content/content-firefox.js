@@ -170,10 +170,35 @@
     try {
       const nodes = createAudioGraph(media);
       processedMedia.set(media, nodes);
+      
+      // Apply current playback rate to new element
+      if (isEnabled) {
+        media.preservesPitch = false;
+        media.mozPreservesPitch = false;
+        media.playbackRate = currentSpeed;
+        monitorMediaElement(media);
+      }
+      
       console.log('[Slowverb Firefox] Audio graph attached');
     } catch (error) {
       console.error('[Slowverb Firefox] Failed to process media:', error);
     }
+  }
+  
+  /**
+   * Handles video source change (YouTube SPA navigation).
+   * Re-applies playback rate when video loads new content.
+   */
+  function handleLoadedData(event) {
+    if (!isEnabled) return;
+    const media = event.target;
+    
+    // Re-apply playback rate
+    media.preservesPitch = false;
+    media.mozPreservesPitch = false;
+    media.playbackRate = currentSpeed;
+    
+    console.log('[Slowverb Firefox] Video source changed, re-applied settings');
   }
 
   /**
@@ -217,6 +242,7 @@
   function monitorMediaElement(media) {
     if (monitoredElements.has(media)) return;
     media.addEventListener('ratechange', handleRateChange);
+    media.addEventListener('loadeddata', handleLoadedData);
     monitoredElements.add(media);
   }
 

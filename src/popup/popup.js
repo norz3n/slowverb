@@ -345,10 +345,13 @@ async function renderPresets() {
       btn.classList.add('active');
     }
     
-    btn.innerHTML = `
-      ${preset.name}
-      ${!preset.builtin ? '<span class="delete-preset">×</span>' : ''}
-    `;
+    btn.textContent = preset.name;
+    if (!preset.builtin) {
+      const deleteSpan = document.createElement('span');
+      deleteSpan.className = 'delete-preset';
+      deleteSpan.textContent = '×';
+      btn.appendChild(deleteSpan);
+    }
     
     btn.addEventListener('click', (e) => {
       if (e.target.classList.contains('delete-preset')) {
