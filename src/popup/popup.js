@@ -10,9 +10,11 @@
 import { 
   MESSAGE_TYPES, 
   DEFAULT_SETTINGS, 
-  CONSTRAINTS 
+  CONSTRAINTS,
+  BUILTIN_PRESETS
 } from '../lib/constants.js';
 import { formatSpeedDisplay } from '../lib/audio-utils.js';
+import { loadPresets, savePreset, deletePreset, applyPreset } from '../lib/settings.js';
 
 /**
  * UI element references.
@@ -26,7 +28,13 @@ const elements = {
   reverbValue: null,
   bassBoostSlider: null,
   bassBoostValue: null,
-  resetButton: null
+  resetButton: null,
+  presetsList: null,
+  savePresetBtn: null,
+  savePresetModal: null,
+  presetNameInput: null,
+  cancelPresetBtn: null,
+  confirmPresetBtn: null
 };
 
 /**
@@ -305,6 +313,129 @@ function handleEnableToggleChange(event) {
  */
 function handleResetClick() {
   resetToDefaults();
+  renderPresets();
+}
+
+// ============================================================================
+// Presets Management
+// ============================================================================
+
+/**
+ * Renders the presets list.
+ */
+async function renderPresets() {
+  if (!elements.presetsList) return;
+  
+  const presets = await loadPresets();
+  elements.presetsList.innerHTML = '';
+  
+  // Sort: builtin first, then custom
+  const sortedPresets = Object.values(presets).sort((a, b) => {
+    if (a.builtin && !b.builtin) return -1;
+    if (!a.builtin && b.builtin) return 1;
+    return 0;
+  });
+  
+  for (const preset of sortedPresets) {
+    const btn = document.createElement('button');
+    btn.className = `preset-btn ${preset.builtin ? 'builtin' : ''}`;
+    btn.dataset.presetId = preset.id;
+    
+    if (currentSettings.activePreset === preset.id) {
+      btn.classList.add('active');
+    }
+    
+    btn.innerHTML = `
+      ${preset.name}
+      ${!preset.builtin ? '<span class="delete-preset">×</span>' : ''}
+    `;
+    
+    btn.addEventListener('click', (e) => {
+      if (e.target.classList.contains('delete-preset')) {
+        handleDeletePreset(preset.id);
+      } else {
+        handleApplyPreset(preset.id);
+      }
+    });
+    
+    elements.presetsList.appendChild(btn);
+  }
+}
+
+/**
+ * Applies a preset.
+ * @param {string} presetId - Preset ID to apply
+ */
+async function handleApplyPreset(presetId) {
+  const newSettings = await applyPreset(presetId);
+  if (newSettings) {
+    currentSettings = newSettings;
+    updateUI(currentSettings);
+    renderPresets();
+    
+    // Send to background for real-time audio update
+    sendToBackground({
+      type: MESSAGE_TYPES.UPDATE_SETTINGS,
+      payload: {
+        speed: newSettings.speed,
+        reverb: newSettings.reverb,
+        bassBoost: newSettings.bassBoost
+      }
+    });
+  }
+}
+
+/**
+ * Deletes a custom preset.
+ * @param {string} presetId - Preset ID to delete
+ */
+async function handleDeletePreset(presetId) {
+  const deleted = await deletePreset(presetId);
+  if (deleted) {
+    if (currentSettings.activePreset === presetId) {
+      currentSettings.activePreset = null;
+    }
+    renderPresets();
+  }
+}
+
+/**
+ * Shows the save preset modal.
+ */
+function showSavePresetModal() {
+  if (elements.savePresetModal) {
+    elements.savePresetModal.classList.remove('hidden');
+    elements.presetNameInput.value = '';
+    elements.presetNameInput.focus();
+  }
+}
+
+/**
+ * Hides the save preset modal.
+ */
+function hideSavePresetModal() {
+  if (elements.savePresetModal) {
+    elements.savePresetModal.classList.add('hidden');
+  }
+}
+
+/**
+ * Saves current settings as a new preset.
+ */
+async function handleSavePreset() {
+  const name = elements.presetNameInput?.value.trim();
+  if (!name) return;
+  
+  const preset = await savePreset({
+    name,
+    speed: currentSettings.speed,
+    reverb: currentSettings.reverb,
+    bassBoost: currentSettings.bassBoost
+  });
+  
+  currentSettings.activePreset = preset.id;
+  hideSavePresetModal();
+  renderPresets();
 }
 
 // ============================================================================
@@ -327,6 +458,14 @@ function initializeUI() {
   elements.bassBoostValue = document.getElementById('bassBoostValue');
   elements.resetButton = document.getElementById('resetButton');
   
+  // Preset elements
+  elements.presetsList = document.getElementById('presetsList');
+  elements.savePresetBtn = document.getElementById('savePresetBtn');
+  elements.savePresetModal = document.getElementById('savePresetModal');
+  elements.presetNameInput = document.getElementById('presetNameInput');
+  elements.cancelPresetBtn = document.getElementById('cancelPresetBtn');
+  elements.confirmPresetBtn = document.getElementById('confirmPresetBtn');
+  
   // Set up event listeners
   if (elements.enableToggle) {
     elements.enableToggle.addEventListener('change', handleEnableToggleChange);
@@ -347,6 +486,26 @@ function initializeUI() {
   if (elements.resetButton) {
     elements.resetButton.addEventListener('click', handleResetClick);
   }
+  
+  // Preset event listeners
+  if (elements.savePresetBtn) {
+    elements.savePresetBtn.addEventListener('click', showSavePresetModal);
+  }
+  
+  if (elements.cancelPresetBtn) {
+    elements.cancelPresetBtn.addEventListener('click', hideSavePresetModal);
+  }
+  
+  if (elements.confirmPresetBtn) {
+    elements.confirmPresetBtn.addEventListener('click', handleSavePreset);
+  }
+  
+  // Enter key in preset name input
+  if (elements.presetNameInput) {
+    elements.presetNameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleSavePreset();
+    });
+  }
 }
 
 /**
@@ -356,6 +515,7 @@ function initializeUI() {
 async function init() {
   initializeUI();
   await loadSettings();
+  await renderPresets();
   console.log('[Slowverb Popup] Initialized');
 }
 

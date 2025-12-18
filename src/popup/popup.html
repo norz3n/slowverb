@@ -25,6 +25,15 @@
       </label>
     </header>
 
+    <!-- Presets -->
+    <div class="control-group presets-group">
+      <div class="control-header">
+        <label>Presets</label>
+        <button id="savePresetBtn" class="icon-btn" title="Save current settings as preset">+</button>
+      </div>
+      <div id="presetsList" class="presets-list"></div>
+    </div>
+
     <!-- Speed control -->
     <div class="control-group">
       <div class="control-header">
@@ -57,6 +66,18 @@
       <button id="resetButton" class="reset-btn" title="Reset all settings to default values">
         Reset to Defaults
       </button>
+    </div>
+  </div>
+
+  <!-- Save Preset Modal -->
+  <div id="savePresetModal" class="modal hidden">
+    <div class="modal-content">
+      <h3>Save Preset</h3>
+      <input type="text" id="presetNameInput" placeholder="Preset name" maxlength="20">
+      <div class="modal-buttons">
+        <button id="cancelPresetBtn" class="modal-btn cancel">Cancel</button>
+        <button id="confirmPresetBtn" class="modal-btn confirm">Save</button>
+      </div>
     </div>
   </div>
 
