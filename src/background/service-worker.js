@@ -523,59 +523,77 @@ async function handleGetSettings(tabId) {
 }
 
 /**
+ * Flag to prevent concurrent recapture attempts.
+ * @type {boolean}
+ */
+let isRecapturing = false;
+
+/**
  * Handles STREAM_ENDED message from offscreen document.
  * Attempts to recapture audio when stream ends (e.g., YouTube SPA navigation).
+ * Uses lock to prevent concurrent recapture attempts.
  * 
  * @returns {Promise<void>}
  */
 async function handleStreamEnded() {
-  console.log('[Slowverb] Stream ended, attempting recapture...');
+  // Prevent concurrent recapture attempts
+  if (isRecapturing) {
+    console.log('[Slowverb] Recapture already in progress, skipping');
+    return;
+  }
   
-  // Find the active tab that had capture
-  for (const [tabId, state] of tabStates) {
-    if (state.isProcessing) {
-      console.log('[Slowverb] Recapturing tab:', tabId);
-      
-      // Clean up old state
-      tabStates.delete(tabId);
-      
-      // IMPORTANT: Close offscreen document to release the stream
-      // This prevents "Cannot capture a tab with an active stream" error
-      await closeOffscreenDocument();
-      
-      // Delay to let Chrome release the stream
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      try {
-        // Recapture with current settings
-        await startAudioCapture(tabId);
+  console.log('[Slowverb] Stream ended, attempting recapture...');
+  isRecapturing = true;
+  
+  try {
+    // Find the active tab that had capture
+    for (const [tabId, state] of tabStates) {
+      if (state.isProcessing) {
+        console.log('[Slowverb] Recapturing tab:', tabId);
         
-        // Re-enable content script
-        const settings = await loadSettings();
+        // Clean up old state
+        tabStates.delete(tabId);
+        
+        // IMPORTANT: Close offscreen document to release the stream
+        // This prevents "Cannot capture a tab with an active stream" error
+        await closeOffscreenDocument();
+        
+        // Delay to let Chrome fully release the stream
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
         try {
-          await chrome.tabs.sendMessage(tabId, {
-            type: 'ENABLE',
-            speed: settings.speed
-          });
-        } catch (e) {
-          // Content script may need re-injection
-          await ensureContentScript(tabId);
-          await chrome.tabs.sendMessage(tabId, {
-            type: 'ENABLE',
-            speed: settings.speed
-          });
+          // Recapture with current settings
+          await startAudioCapture(tabId);
+          
+          // Re-enable content script
+          const settings = await loadSettings();
+          try {
+            await chrome.tabs.sendMessage(tabId, {
+              type: 'ENABLE',
+              speed: settings.speed
+            });
+          } catch (e) {
+            // Content script may need re-injection
+            await ensureContentScript(tabId);
+            await chrome.tabs.sendMessage(tabId, {
+              type: 'ENABLE',
+              speed: settings.speed
+            });
+          }
+          
+          console.log('[Slowverb] Recapture successful');
+        } catch (error) {
+          console.error('[Slowverb] Recapture failed:', error);
+          await updateBadge(false, tabId);
+          // Save disabled state
+          await saveSettings({ enabled: false });
         }
         
-        console.log('[Slowverb] Recapture successful');
-      } catch (error) {
-        console.error('[Slowverb] Recapture failed:', error);
-        await updateBadge(false, tabId);
-        // Save disabled state
-        await saveSettings({ enabled: false });
+        break; // Only one active capture at a time
       }
-      
-      break; // Only one active capture at a time
     }
+  } finally {
+    isRecapturing = false;
   }
 }
 
