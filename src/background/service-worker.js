@@ -421,12 +421,18 @@ async function handleToggleExtension(payload, tabId) {
     const settings = await loadSettings();
     
     if (enabled) {
-      // Always stop existing capture first to avoid "active stream" error
-      if (tabStates.has(tabId)) {
-        await stopAudioCapture(tabId);
-        // Small delay to ensure stream is fully released
-        await new Promise(resolve => setTimeout(resolve, 100));
+      // Always close offscreen document first to release any active stream
+      // This prevents "Cannot capture a tab with an active stream" error
+      // even if tabStates is out of sync
+      const hasOffscreen = await hasOffscreenDocument();
+      if (hasOffscreen) {
+        await closeOffscreenDocument();
+        // Delay to ensure Chrome fully releases the stream
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
+      
+      // Clear any stale tab states
+      tabStates.clear();
       
       // Ensure content script is loaded (for tabs opened before extension)
       await ensureContentScript(tabId);
@@ -444,14 +450,15 @@ async function handleToggleExtension(payload, tabId) {
         console.warn('[Slowverb] Could not send ENABLE to content script:', e);
       }
     } else {
-      // Stop audio capture - stop ALL active captures and offscreen
-      // This ensures we stop even if tabId doesn't match due to recapture
-      for (const [activeTabId] of tabStates) {
-        await stopAudioCapture(activeTabId);
-      }
-      
-      // Also close offscreen document to fully stop audio
+      // IMPORTANT: Close offscreen document FIRST to release the stream
+      // This must happen before any other cleanup to avoid "active stream" error
       await closeOffscreenDocument();
+      
+      // Small delay to ensure Chrome fully releases the stream
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      // Clear all tab states
+      tabStates.clear();
       
       // Disable playback rate control in content script
       try {
