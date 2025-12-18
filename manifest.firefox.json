@@ -1,0 +1,61 @@
+{
+  "manifest_version": 3,
+  "name": "Slowverb",
+  "version": "1.0.0",
+  "description": "Slowed & Reverb audio effects for browser media",
+  
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "slowverb@example.com",
+      "strict_min_version": "109.0"
+    }
+  },
+  
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/content-firefox.js"],
+      "run_at": "document_start"
+    }
+  ],
+  
+  "background": {
+    "scripts": ["src/background/background-firefox.js"],
+    "type": "module"
+  },
+  
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/worklets/pitch-shifter-processor.js"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "assets/icons/icon16.png",
+      "48": "assets/icons/icon48.png",
+      "128": "assets/icons/icon128.png"
+    },
+    "default_title": "Slowverb"
+  },
+  
+  "icons": {
+    "16": "assets/icons/icon16.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
+  }
+}

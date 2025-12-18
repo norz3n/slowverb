@@ -1,12 +1,17 @@
 {
   "name": "slowverb",
   "version": "1.0.0",
-  "description": "Slowed & Reverb audio effects extension for Chromium browsers",
+  "description": "Slowed & Reverb audio effects extension for Chrome and Firefox",
   "type": "module",
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "build": "node scripts/build.js all",
+    "build:chrome": "node scripts/build.js chrome",
+    "build:firefox": "node scripts/build.js firefox",
+    "dev:chrome": "copy manifest.chrome.json manifest.json",
+    "dev:firefox": "web-ext run --source-dir dist/firefox --firefox-profile dev-profile --keep-profile-changes"
   },
   "devDependencies": {
     "fast-check": "^3.22.0",
@@ -20,5 +25,8 @@
     "slowed",
     "web-audio-api"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "webextension-polyfill": "^0.12.0"
+  }
 }
