@@ -7,7 +7,7 @@
  * Requirements: 7.1 (persist settings), 7.2 (restore settings), 7.3 (reset to defaults)
  */
 
-import { DEFAULT_SETTINGS, CONSTRAINTS, ERROR_CODES } from './constants.js';
+import { DEFAULT_SETTINGS, CONSTRAINTS, ERROR_CODES, BUILTIN_PRESETS } from './constants.js';
 
 /**
  * Storage key for settings in Chrome storage.
@@ -62,6 +62,11 @@ export function validateSettings(settings) {
   // Validate enabled (boolean)
   if (settings.enabled !== undefined) {
     validated.enabled = Boolean(settings.enabled);
+  }
+  
+  // Validate activePreset (string or null)
+  if (settings.activePreset !== undefined) {
+    validated.activePreset = settings.activePreset;
   }
   
   return validated;
@@ -157,4 +162,123 @@ export async function resetSettings() {
     console.error('Failed to reset settings:', error);
     throw new Error(ERROR_CODES.SETTINGS_SAVE_FAILED);
   }
+}
+
+/**
+ * Storage key for custom presets.
+ * @constant {string}
+ */
+const PRESETS_KEY = 'slowverb_presets';
+
+/**
+ * Loads all presets (builtin + custom).
+ * 
+ * @returns {Promise<Object.<string, Preset>>} All presets
+ */
+export async function loadPresets() {
+  try {
+    const result = await chrome.storage.sync.get(PRESETS_KEY);
+    const customPresets = result[PRESETS_KEY] || {};
+    
+    // Merge builtin with custom (custom can override builtin names but not IDs)
+    return { ...BUILTIN_PRESETS, ...customPresets };
+  } catch (error) {
+    console.error('Failed to load presets:', error);
+    return { ...BUILTIN_PRESETS };
+  }
+}
+
+/**
+ * Saves a custom preset.
+ * 
+ * @param {Object} preset - Preset to save
+ * @param {string} preset.name - Display name
+ * @param {number} preset.speed - Speed value
+ * @param {number} preset.reverb - Reverb value
+ * @param {number} preset.bassBoost - Bass boost value
+ * @returns {Promise<Object>} Saved preset with generated ID
+ */
+export async function savePreset(preset) {
+  try {
+    const result = await chrome.storage.sync.get(PRESETS_KEY);
+    const customPresets = result[PRESETS_KEY] || {};
+    
+    // Generate unique ID for new preset
+    const id = preset.id || `custom-${Date.now()}`;
+    
+    const newPreset = {
+      id,
+      name: preset.name,
+      speed: preset.speed,
+      reverb: preset.reverb,
+      bassBoost: preset.bassBoost,
+      builtin: false
+    };
+    
+    customPresets[id] = newPreset;
+    
+    await chrome.storage.sync.set({ [PRESETS_KEY]: customPresets });
+    
+    return newPreset;
+  } catch (error) {
+    console.error('Failed to save preset:', error);
+    throw new Error(ERROR_CODES.SETTINGS_SAVE_FAILED);
+  }
+}
+
+/**
+ * Deletes a custom preset.
+ * Cannot delete builtin presets.
+ * 
+ * @param {string} presetId - ID of preset to delete
+ * @returns {Promise<boolean>} True if deleted
+ */
+export async function deletePreset(presetId) {
+  // Cannot delete builtin presets
+  if (BUILTIN_PRESETS[presetId]) {
+    return false;
+  }
+  
+  try {
+    const result = await chrome.storage.sync.get(PRESETS_KEY);
+    const customPresets = result[PRESETS_KEY] || {};
+    
+    if (customPresets[presetId]) {
+      delete customPresets[presetId];
+      await chrome.storage.sync.set({ [PRESETS_KEY]: customPresets });
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('Failed to delete preset:', error);
+    return false;
+  }
+}
+
+/**
+ * Applies a preset to current settings.
+ * 
+ * @param {string} presetId - ID of preset to apply
+ * @returns {Promise<Object|null>} New settings or null if preset not found
+ */
+export async function applyPreset(presetId) {
+  const presets = await loadPresets();
+  const preset = presets[presetId];
+  
+  if (!preset) {
+    return null;
+  }
+  
+  const currentSettings = await loadSettings();
+  const newSettings = {
+    ...currentSettings,
+    speed: preset.speed,
+    reverb: preset.reverb,
+    bassBoost: preset.bassBoost,
+    activePreset: presetId
+  };
+  
+  await saveSettings(newSettings);
+  return newSettings;
 }

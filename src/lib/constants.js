@@ -13,14 +13,46 @@
  * @property {number} speed - Playback rate (1.0 = normal speed)
  * @property {number} reverb - Reverb wet/dry percentage (0-100)
  * @property {number} bassBoost - Bass boost percentage (0-100)
- * @property {boolean} pitchCorrection - Whether to maintain original pitch
  * @property {boolean} enabled - Whether the extension is active
+ * @property {string|null} activePreset - Currently active preset ID or null
  */
 export const DEFAULT_SETTINGS = {
   speed: 1.0,
   reverb: 0,
   bassBoost: 0,
-  enabled: false
+  enabled: false,
+  activePreset: null
+};
+
+/**
+ * Built-in presets that cannot be deleted.
+ * @type {Object.<string, Preset>}
+ */
+export const BUILTIN_PRESETS = {
+  'slowed-reverb': {
+    id: 'slowed-reverb',
+    name: 'Slowed & Reverb',
+    speed: 0.8,
+    reverb: 40,
+    bassBoost: 0,
+    builtin: true
+  },
+  'nightcore': {
+    id: 'nightcore',
+    name: 'Nightcore',
+    speed: 1.2,
+    reverb: 0,
+    bassBoost: 0,
+    builtin: true
+  },
+  'off': {
+    id: 'off',
+    name: 'OFF',
+    speed: 1.0,
+    reverb: 0,
+    bassBoost: 0,
+    builtin: true
+  }
 };
 
 /**
