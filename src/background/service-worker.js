@@ -505,6 +505,7 @@ async function handleResetSettings() {
 /**
  * Handles GET_SETTINGS message from popup.
  * Returns current settings with actual enabled state based on active capture.
+ * Uses offscreen document existence as the source of truth for enabled state.
  * 
  * @param {number} tabId - Current tab ID to check capture state
  * @returns {Promise<Object>} Response object with settings
@@ -513,11 +514,25 @@ async function handleGetSettings(tabId) {
   try {
     const settings = await loadSettings();
     
-    // Проверяем реальное состояние capture для текущей вкладки
-    // Если capture не активен, enabled должен быть false
-    if (tabId && settings.enabled && !tabStates.has(tabId)) {
+    // Check if offscreen document exists - this is the real indicator of active processing
+    // tabStates can be out of sync after SPA navigation
+    const hasOffscreen = await hasOffscreenDocument();
+    
+    if (hasOffscreen) {
+      // Offscreen exists = audio processing is active
+      settings.enabled = true;
+      // Update tabStates if needed
+      if (tabId && !tabStates.has(tabId)) {
+        tabStates.set(tabId, {
+          tabId,
+          isProcessing: true,
+          streamId: null,
+          settings
+        });
+      }
+    } else if (settings.enabled) {
+      // Settings say enabled but no offscreen = out of sync, fix it
       settings.enabled = false;
-      // Обновляем storage чтобы синхронизировать состояние
       await saveSettings({ enabled: false });
       await updateBadge(false, tabId);
     }
