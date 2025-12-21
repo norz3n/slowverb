@@ -2,7 +2,7 @@
 
 Open-source alternative to [SlowedAndReverb.Studio](https://slowedandreverb.studio/) as a browser extension.
 
-Apply Slowed + Reverb effects to any audio/video right in your browser — YouTube, SoundCloud, Spotify Web, and any other website.
+Apply Slowed + Reverb effects to any audio/video right in your browser — YouTube and YouTube Music.
 
 ## Features
 
@@ -10,26 +10,46 @@ Apply Slowed + Reverb effects to any audio/video right in your browser — YouTu
 - 🔊 Reverb effect (0% - 100%)
 - 🎸 Bass Boost (0% - 100%)
 - 💾 Auto-save settings
+- 🎛️ Presets (Slowed & Reverb, Nightcore, custom)
 - 🎨 Modern UI with Montserrat font
 
 ## Installation
+
+### From Stores
+
+- [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/slowverb/) (pending)
+- [Opera Add-ons](https://addons.opera.com/extensions/details/slowverb/) (pending)
+
+### From Source
 
 1. Clone the repository:
 ```bash
 git clone https://gitlab.com/norz3n/slowverb.git
 cd slowverb
-```
-
-2. Install dependencies:
-```bash
 npm install
 ```
 
-3. Load extension in Chrome:
-   - Open `chrome://extensions/`
-   - Enable "Developer mode"
-   - Click "Load unpacked"
-   - Select the project folder
+2. Build for your browser:
+```bash
+# Chrome/Opera
+npm run build:chrome
+
+# Firefox
+npm run build:firefox
+```
+
+3. Load the extension:
+
+**Chrome/Opera:**
+- Open `chrome://extensions/` (or `opera://extensions/`)
+- Enable "Developer mode"
+- Click "Load unpacked"
+- Select `dist/chrome` folder
+
+**Firefox:**
+- Open `about:debugging#/runtime/this-firefox`
+- Click "Load Temporary Add-on"
+- Select any file in `dist/firefox` folder
 
 ## Usage
 
@@ -44,13 +64,18 @@ npm install
 # Run tests
 npm test
 
-# Generate icons from SVG
-node -e "const sharp = require('sharp'); [16,48,128].forEach(s => sharp('assets/icons/icon.svg').resize(s,s).png().toFile('assets/icons/icon'+s+'.png'))"
+# Build all browsers
+npm run build
+
+# Development mode (watch)
+npm run dev:chrome
+npm run dev:firefox
 ```
 
 ## Tech Stack
 
 - Chrome Extension Manifest V3
+- Firefox WebExtensions API
 - Web Audio API
 - Vanilla JavaScript (ES Modules)
 

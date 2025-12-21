@@ -136,7 +136,7 @@
     const convolver = ctx.createConvolver();
     convolver.buffer = generateImpulseResponse(ctx, AUDIO_CONSTANTS.reverb.defaultDuration);
     
-    // Dry/wet
+    // Dry/wet - используем текущие настройки
     const { wetGain: wetValue, dryGain: dryValue } = calculateWetDryMix(currentSettings.reverb);
     
     const dryGain = ctx.createGain();
@@ -157,6 +157,8 @@
     dryGain.connect(outputGain);
     wetGain.connect(outputGain);
     outputGain.connect(ctx.destination);
+    
+    console.log('[Slowverb Firefox] Audio graph created with bassBoost:', currentSettings.bassBoost, 'reverb:', currentSettings.reverb);
     
     return { source, bassBoost, reverbHighpass, convolver, dryGain, wetGain, outputGain };
   }
@@ -207,18 +209,27 @@
   function updateAllMedia(settings) {
     currentSettings = { ...currentSettings, ...settings };
     
-    document.querySelectorAll('video, audio').forEach(media => {
+    const mediaElements = document.querySelectorAll('video, audio');
+    console.log('[Slowverb Firefox] updateAllMedia called, media count:', mediaElements.length, 'settings:', settings);
+    
+    mediaElements.forEach(media => {
       const nodes = processedMedia.get(media);
-      if (!nodes) return;
+      if (!nodes) {
+        console.log('[Slowverb Firefox] No nodes for media element');
+        return;
+      }
       
       if (settings.bassBoost !== undefined) {
-        nodes.bassBoost.gain.value = calculateBassBoostGain(settings.bassBoost);
+        const gainDb = calculateBassBoostGain(settings.bassBoost);
+        nodes.bassBoost.gain.value = gainDb;
+        console.log('[Slowverb Firefox] Bass boost set to:', gainDb, 'dB');
       }
       
       if (settings.reverb !== undefined) {
         const { wetGain, dryGain } = calculateWetDryMix(settings.reverb);
         nodes.wetGain.gain.value = wetGain;
         nodes.dryGain.gain.value = dryGain;
+        console.log('[Slowverb Firefox] Reverb wet/dry:', wetGain, '/', dryGain);
       }
     });
   }
@@ -345,9 +356,15 @@
         break;
         
       case 'ENABLE':
-        isEnabled = true;
         currentSpeed = message.speed || 1.0;
+        // Сначала обновляем настройки, потом создаём аудио граф
+        if (message.settings) {
+          currentSettings = { ...currentSettings, ...message.settings };
+          console.log('[Slowverb Firefox] Settings before enable:', currentSettings);
+        }
+        // enable() сам установит isEnabled = true
         enable();
+        // После создания графа применяем настройки к уже созданным узлам
         if (message.settings) updateAllMedia(message.settings);
         setPlaybackRate(currentSpeed);
         sendResponse({ success: true });
