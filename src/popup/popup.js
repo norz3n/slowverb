@@ -24,6 +24,7 @@ const elements = {
   enableToggle: null,
   speedSlider: null,
   speedValue: null,
+  preservePitchToggle: null,
   reverbSlider: null,
   reverbValue: null,
   bassBoostSlider: null,
@@ -207,6 +208,11 @@ function updateUI(settings) {
     elements.speedValue.textContent = formatSpeedDisplay(settings.speed);
   }
   
+  // Preserve pitch toggle
+  if (elements.preservePitchToggle) {
+    elements.preservePitchToggle.checked = settings.preservePitch || false;
+  }
+  
   // Reverb slider and value
   if (elements.reverbSlider) {
     elements.reverbSlider.value = settings.reverb;
@@ -262,6 +268,17 @@ function handleSpeedChange(event) {
   
   // Save setting
   saveSettings({ speed });
+}
+
+/**
+ * Handles preserve pitch toggle change.
+ * When enabled, pitch is preserved when speed changes (uses SoundTouch).
+ * 
+ * @param {Event} event - Change event
+ */
+function handlePreservePitchChange(event) {
+  const preservePitch = event.target.checked;
+  saveSettings({ preservePitch });
 }
 
 /**
@@ -367,22 +384,29 @@ async function renderPresets() {
 
 /**
  * Applies a preset.
+ * Preserves current preservePitch setting when switching presets.
  * @param {string} presetId - Preset ID to apply
  */
 async function handleApplyPreset(presetId) {
+  // Save current preservePitch before applying preset
+  const currentPreservePitch = currentSettings.preservePitch;
+  
   const newSettings = await applyPreset(presetId);
   if (newSettings) {
+    // Restore preservePitch - it should not change with presets
+    newSettings.preservePitch = currentPreservePitch;
     currentSettings = newSettings;
     updateUI(currentSettings);
     renderPresets();
     
-    // Send to background for real-time audio update
+    // Send to background for real-time audio update (include preservePitch)
     sendToBackground({
       type: MESSAGE_TYPES.UPDATE_SETTINGS,
       payload: {
         speed: newSettings.speed,
         reverb: newSettings.reverb,
-        bassBoost: newSettings.bassBoost
+        bassBoost: newSettings.bassBoost,
+        preservePitch: currentPreservePitch
       }
     });
   }
@@ -455,6 +479,7 @@ function initializeUI() {
   elements.enableToggle = document.getElementById('enableToggle');
   elements.speedSlider = document.getElementById('speedSlider');
   elements.speedValue = document.getElementById('speedValue');
+  elements.preservePitchToggle = document.getElementById('preservePitchToggle');
   elements.reverbSlider = document.getElementById('reverbSlider');
   elements.reverbValue = document.getElementById('reverbValue');
   elements.bassBoostSlider = document.getElementById('bassBoostSlider');
@@ -476,6 +501,10 @@ function initializeUI() {
   
   if (elements.speedSlider) {
     elements.speedSlider.addEventListener('input', handleSpeedChange);
+  }
+  
+  if (elements.preservePitchToggle) {
+    elements.preservePitchToggle.addEventListener('change', handlePreservePitchChange);
   }
   
   if (elements.reverbSlider) {
@@ -540,6 +569,7 @@ export {
   updateUI,
   initializeUI,
   handleSpeedChange,
+  handlePreservePitchChange,
   handleReverbChange,
   handleBassBoostChange,
   handleEnableToggleChange,

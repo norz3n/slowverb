@@ -415,3 +415,59 @@ input[type="range"]::-moz-range-track {
 .modal-btn.confirm:hover {
   opacity: 0.9;
 }
+
+/* ===== PRESERVE PITCH TOGGLE ===== */
+.preserve-pitch-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.preserve-pitch-toggle input {
+  display: none;
+}
+
+.checkbox-mark {
+  width: 16px;
+  height: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  position: relative;
+  transition: all 0.2s;
+}
+
+.checkbox-mark::after {
+  content: '';
+  position: absolute;
+  display: none;
+  left: 5px;
+  top: 2px;
+  width: 4px;
+  height: 8px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.preserve-pitch-toggle input:checked ~ .checkbox-mark {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.preserve-pitch-toggle input:checked ~ .checkbox-mark::after {
+  display: block;
+}
+
+.checkbox-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  transition: color 0.2s;
+}
+
+.preserve-pitch-toggle:hover .checkbox-label {
+  color: var(--text-secondary);
+}

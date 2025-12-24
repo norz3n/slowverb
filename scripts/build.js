@@ -17,6 +17,16 @@ const ROOT = path.resolve(__dirname, '..');
 const BROWSERS = ['chrome', 'firefox'];
 
 /**
+ * Gets version from Chrome manifest.
+ * @returns {string} Version string
+ */
+function getVersion() {
+  const manifestPath = path.join(ROOT, 'manifest.chrome.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  return manifest.version;
+}
+
+/**
  * Files to copy for each browser build.
  */
 const COMMON_FILES = [
@@ -30,6 +40,7 @@ const COMMON_FILES = [
   'src/lib/audio-utils.js',
   'src/lib/audio-processor.js',
   'src/lib/browser-compat.js',
+  'src/lib/soundtouch.js',
   'assets/icons/icon16.png',
   'assets/icons/icon48.png',
   'assets/icons/icon128.png',
@@ -81,9 +92,10 @@ function copyFile(src, destDir) {
  * @param {string} browser - 'chrome' or 'firefox'
  */
 function build(browser) {
-  console.log(`\nBuilding for ${browser}...`);
+  const version = getVersion();
+  console.log(`\nBuilding for ${browser} v${version}...`);
   
-  const distDir = path.join(ROOT, 'dist', browser);
+  const distDir = path.join(ROOT, 'dist', `${browser}-${version}`);
   
   // Clean previous build
   if (fs.existsSync(distDir)) {
@@ -112,7 +124,40 @@ function build(browser) {
     fs.copyFileSync(polyfillSrc, polyfillDest);
   }
   
-  console.log(`\n✓ ${browser} build complete: dist/${browser}/`);
+  console.log(`\n✓ ${browser} v${version} build complete: dist/${browser}-${version}/`);
+}
+
+/**
+ * Creates a zip archive of the build directory.
+ * @param {string} browser - 'chrome' or 'firefox'
+ */
+async function pack(browser) {
+  const { execSync } = await import('child_process');
+  const version = getVersion();
+  const distDir = path.join(ROOT, 'dist', `${browser}-${version}`);
+  const zipName = `slowverb-${browser}-${version}.zip`;
+  const zipPath = path.join(ROOT, 'dist', zipName);
+  
+  if (!fs.existsSync(distDir)) {
+    console.error(`\n✗ Build directory not found: dist/${browser}-${version}/`);
+    console.error(`  Run 'npm run build:${browser}' first`);
+    return;
+  }
+  
+  // Remove old zip if exists
+  if (fs.existsSync(zipPath)) {
+    fs.unlinkSync(zipPath);
+  }
+  
+  console.log(`\nPacking ${browser} v${version}...`);
+  
+  // Use PowerShell Compress-Archive on Windows
+  const srcPattern = path.join(distDir, '*');
+  execSync(`powershell -Command "Compress-Archive -Path '${srcPattern}' -DestinationPath '${zipPath}'"`, {
+    stdio: 'inherit'
+  });
+  
+  console.log(`✓ Created: dist/${zipName}`);
 }
 
 // Main
@@ -121,10 +166,20 @@ const target = args[0] || 'all';
 
 if (target === 'all') {
   BROWSERS.forEach(build);
+} else if (target === 'pack') {
+  const packTarget = args[1] || 'all';
+  if (packTarget === 'all') {
+    (async () => { for (const b of BROWSERS) await pack(b); })();
+  } else if (BROWSERS.includes(packTarget)) {
+    pack(packTarget);
+  } else {
+    console.error(`Unknown pack target: ${packTarget}`);
+    process.exit(1);
+  }
 } else if (BROWSERS.includes(target)) {
   build(target);
 } else {
   console.error(`Unknown target: ${target}`);
-  console.error(`Usage: node scripts/build.js [chrome|firefox|all]`);
+  console.error(`Usage: node scripts/build.js [chrome|firefox|all|pack [chrome|firefox|all]]`);
   process.exit(1);
 }

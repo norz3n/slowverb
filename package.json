@@ -10,6 +10,9 @@
     "build": "node scripts/build.js all",
     "build:chrome": "node scripts/build.js chrome",
     "build:firefox": "node scripts/build.js firefox",
+    "pack": "node scripts/build.js pack all",
+    "pack:chrome": "node scripts/build.js pack chrome",
+    "pack:firefox": "node scripts/build.js pack firefox",
     "dev:chrome": "copy manifest.chrome.json manifest.json",
     "dev:firefox": "web-ext run --source-dir dist/firefox --firefox-profile dev-profile --keep-profile-changes"
   },

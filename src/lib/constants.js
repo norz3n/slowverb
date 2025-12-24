@@ -21,7 +21,8 @@ export const DEFAULT_SETTINGS = {
   reverb: 0,
   bassBoost: 0,
   enabled: false,
-  activePreset: null
+  activePreset: null,
+  preservePitch: false  // When true, pitch is preserved when speed changes (uses SoundTouch)
 };
 
 /**

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Slowverb",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Slowed & Reverb audio effects for browser media",
   
   "browser_specific_settings": {

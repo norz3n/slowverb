@@ -69,6 +69,11 @@ export function validateSettings(settings) {
     validated.activePreset = settings.activePreset;
   }
   
+  // Validate preservePitch (boolean)
+  if (settings.preservePitch !== undefined) {
+    validated.preservePitch = Boolean(settings.preservePitch);
+  }
+  
   return validated;
 }
 

@@ -19,6 +19,7 @@ import {
   AUDIO_CONSTANTS,
   DEFAULT_SETTINGS 
 } from '../lib/constants.js';
+import { StreamPitchShifter } from '../lib/soundtouch.js';
 
 /**
  * Audio processor state object.
@@ -30,6 +31,7 @@ const audioProcessor = {
   context: null,
   source: null,
   mediaStream: null, // MediaStream from tab capture - needs to be stopped on disconnect
+  pitchShifter: null, // StreamPitchShifter for pitch-preserved tempo change
   bassBoostFilter: null,
   reverbHighpass: null, // Highpass filter to remove low frequencies from reverb
   convolver: null,
@@ -173,8 +175,15 @@ function setupAudioGraph() {
   audioProcessor.outputGain.channelCount = 2;
   audioProcessor.outputGain.channelCountMode = 'explicit';
   
-  // Bass boost → dry path → output
-  // Bass boost → highpass → convolver → wet path → output
+  // Create StreamPitchShifter for pitch-preserved tempo change
+  // Using larger buffer (8192) to reduce audio crackling
+  audioProcessor.pitchShifter = new StreamPitchShifter(ctx, 8192);
+  audioProcessor.pitchShifter.tempo = 1.0;
+  audioProcessor.pitchShifter.pitch = 1.0;
+  
+  // Audio graph connections depend on preservePitch setting
+  // Default: source → bassBoost → dry/wet → output
+  // With preservePitch: source → pitchShifter → bassBoost → dry/wet → output
   audioProcessor.bassBoostFilter.connect(audioProcessor.dryGain);
   audioProcessor.bassBoostFilter.connect(audioProcessor.reverbHighpass);
   audioProcessor.reverbHighpass.connect(audioProcessor.convolver);
@@ -252,8 +261,8 @@ async function connectTabAudio(streamId) {
     audioProcessor.source = audioProcessor.context.createMediaStreamSource(stream);
     
     // Connect source to the audio graph
-    // Source → bassBoostFilter
-    audioProcessor.source.connect(audioProcessor.bassBoostFilter);
+    // Connection depends on preservePitch setting - will be reconnected in updatePreservePitch
+    connectSourceToGraph();
     
     console.log('[Slowverb] Tab audio connected successfully');
   } catch (error) {
@@ -267,7 +276,50 @@ async function connectTabAudio(streamId) {
 }
 
 /**
+ * Connects source to the audio graph based on preservePitch setting.
+ * When preservePitch is enabled: source → pitchShifter → bassBoost → ...
+ * When disabled: source → bassBoost → ...
+ */
+function connectSourceToGraph() {
+  if (!audioProcessor.source) return;
+  
+  // Disconnect source from any previous connections
+  try {
+    audioProcessor.source.disconnect();
+  } catch (e) { /* ignore */ }
+  
+  // Disconnect pitchShifter output (but don't destroy the node - reuse it)
+  if (audioProcessor.pitchShifter && audioProcessor.pitchShifter.outputNode) {
+    try {
+      audioProcessor.pitchShifter.outputNode.disconnect();
+    } catch (e) { /* ignore */ }
+    // Clear internal buffers to avoid audio artifacts when switching modes
+    audioProcessor.pitchShifter.clear();
+  }
+  
+  if (audioProcessor.currentSettings.preservePitch && audioProcessor.pitchShifter) {
+    // source → pitchShifter → bassBoost
+    audioProcessor.source.connect(audioProcessor.pitchShifter.inputNode);
+    audioProcessor.pitchShifter.outputNode.connect(audioProcessor.bassBoostFilter);
+    
+    // Video playback rate changes pitch. To compensate:
+    // If speed = 0.8, pitch drops to 0.8x. To restore, set pitch = 1/0.8 = 1.25
+    // SoundTouch pitch correction: pitch = 1/speed
+    const pitchCorrection = 1.0 / audioProcessor.currentSettings.speed;
+    audioProcessor.pitchShifter.tempo = 1.0; // Don't change tempo, audio is already slowed by video
+    audioProcessor.pitchShifter.pitch = pitchCorrection;
+    
+    console.log('[Slowverb] Connected with pitch preservation, speed:', audioProcessor.currentSettings.speed, 'pitch correction:', pitchCorrection);
+  } else {
+    // source → bassBoost (classic mode)
+    audioProcessor.source.connect(audioProcessor.bassBoostFilter);
+    console.log('[Slowverb] Connected in classic mode (no pitch preservation)');
+  }
+}
+
+/**
  * Updates the playback speed (playback rate).
+ * When preservePitch is enabled, updates pitchShifter pitch correction.
  * 
  * Note: Actual playback rate change for media elements is handled by
  * the content script or media element directly.
@@ -278,8 +330,43 @@ async function connectTabAudio(streamId) {
  */
 function updateSpeed(value) {
   const playbackRate = calculatePlaybackRate(value);
+  const previousSpeed = audioProcessor.currentSettings.speed;
   audioProcessor.currentSettings.speed = playbackRate;
+  
+  // Update pitchShifter pitch correction if preservePitch is enabled
+  if (audioProcessor.currentSettings.preservePitch && audioProcessor.pitchShifter) {
+    // Clear buffers when speed changes to avoid mixing old pitch-corrected data
+    // This prevents pitch artifacts when switching between presets (e.g., Nightcore → Slowed)
+    if (previousSpeed !== playbackRate) {
+      audioProcessor.pitchShifter.clear();
+    }
+    
+    // Video playback changes pitch proportionally to speed
+    // To compensate: pitch = 1/speed (e.g., speed 0.8 → pitch 1.25)
+    const pitchCorrection = 1.0 / playbackRate;
+    audioProcessor.pitchShifter.tempo = 1.0;
+    audioProcessor.pitchShifter.pitch = pitchCorrection;
+  }
+  
   console.log('[Slowverb] Speed updated to:', playbackRate);
+}
+
+/**
+ * Updates preserve pitch setting.
+ * Reconnects audio graph when setting changes.
+ * 
+ * @param {boolean} enabled - Whether to preserve pitch
+ */
+function updatePreservePitch(enabled) {
+  const wasEnabled = audioProcessor.currentSettings.preservePitch;
+  audioProcessor.currentSettings.preservePitch = enabled;
+  
+  // Reconnect graph if setting changed and source exists
+  if (wasEnabled !== enabled && audioProcessor.source) {
+    connectSourceToGraph();
+  }
+  
+  console.log('[Slowverb] Preserve pitch:', enabled);
 }
 
 /**
@@ -332,12 +419,15 @@ function applySettings(settings) {
   const speed = settings.speed ?? audioProcessor.currentSettings.speed;
   const reverb = settings.reverb ?? audioProcessor.currentSettings.reverb;
   const bassBoost = settings.bassBoost ?? audioProcessor.currentSettings.bassBoost;
+  const preservePitch = settings.preservePitch ?? audioProcessor.currentSettings.preservePitch;
   
+  // preservePitch must be applied first as it affects audio graph routing
+  updatePreservePitch(preservePitch);
   updateSpeed(speed);
   updateReverb(reverb);
   updateBassBoost(bassBoost);
   
-  console.log('[Slowverb] Settings applied - speed:', speed, 'reverb:', reverb, 'bass:', bassBoost);
+  console.log('[Slowverb] Settings applied - speed:', speed, 'reverb:', reverb, 'bass:', bassBoost, 'preservePitch:', preservePitch);
 }
 
 /**
@@ -369,6 +459,16 @@ function disconnect() {
       // Ignore errors
     }
     audioProcessor.mediaStream = null;
+  }
+  
+  // Disconnect pitch shifter
+  if (audioProcessor.pitchShifter) {
+    try {
+      audioProcessor.pitchShifter.disconnect();
+    } catch (e) {
+      // Ignore errors if already disconnected
+    }
+    audioProcessor.pitchShifter = null;
   }
   
   // Disconnect bass boost filter
@@ -527,9 +627,11 @@ export {
   initAudioContext,
   setupAudioGraph,
   connectTabAudio,
+  connectSourceToGraph,
   updateSpeed,
   updateReverb,
   updateBassBoost,
+  updatePreservePitch,
   disconnect,
   applySettings
 };
